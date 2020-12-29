@@ -5,8 +5,10 @@
 	Country: Brasil
 	State: Pernambuco
 	Developer: Matheus Johann Araujo
-	Date: 2020-12-26
+	Date: 2020-12-29
 */
+
+declare(ticks=1);
 
 require_once "thread_parallel.php";
 
@@ -44,6 +46,22 @@ $scripts = [
 	for ($i = 0; $i <= 20; $i++) { 
 		echo $i, " ";
 	}
+',
+'
+	// SCRIPT 4
+	for ($i = 0; $i < 10; $i++) { 
+		file_put_contents("a.txt", $i);
+		sleep(1);	
+	}
+	unlink("a.txt");
+',
+'
+	// SCRIPT 5
+	for ($i = 0; $i < 10; $i++) { 
+		file_put_contents("b.txt", $i);
+		sleep(1);	
+	}
+	unlink("b.txt");
 '
 ];
 
@@ -51,7 +69,15 @@ $scripts = [
 $thread_http = "http://localhost/php_thread_parallel/thread_http.php";
 
 // Cria uma thread para cada script, e aguarda o fim da execução de todos os scripts para obter o respectivo resultado de cada um.
-$scripts = thread_parallel($scripts, $thread_http);
+$promise = thread_parallel($scripts, $thread_http);
 
-// Mostra o conteúdo retornado ao fim da execução de cada script.
-var_export($scripts);
+$promise
+	->then(function($res) {
+		// Mostra o conteúdo retornado ao fim da execução de cada script.
+		var_export($res);
+	})
+	->catch(function($err) {
+		var_export($err);
+	});
+
+workWait(function() { usleep(1); });
