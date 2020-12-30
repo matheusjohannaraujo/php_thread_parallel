@@ -5,7 +5,7 @@
 	Country: Brasil
 	State: Pernambuco
 	Developer: Matheus Johann Araujo
-	Date: 2020-12-29
+	Date: 2020-12-30
 */
 
 error_reporting(E_ALL);
@@ -31,9 +31,16 @@ require_once "Promise.php";
 /**
  * @param string|array $script
  * @param string $thread_http [optional, default = "http://localhost/php_thread_parallel/thread_http.php"]
+ * @param bool $waitResponse [optional, default = true]
+ * @param bool $infoRequest [optional, default = false]
  * @return Promise
  */
-function thread_parallel($script, string $thread_http = "http://localhost/php_thread_parallel/thread_http.php") :Promise
+function thread_parallel(
+    $script,
+    string $thread_http = "http://localhost/php_thread_parallel/thread_http.php",
+    bool $waitResponse = true,
+    bool $infoRequest = false
+) :Promise
 {
     if (is_string($script)) {
         $script = [$script];
@@ -41,9 +48,34 @@ function thread_parallel($script, string $thread_http = "http://localhost/php_th
     if (!is_array($script)) {
         $script = ['echo "invalid script";'];
     }
-    return new Promise(function($resolve, $reject) use ($script, $thread_http) {
+    return new Promise(function($resolve, $reject) use (&$script, &$thread_http, &$waitResponse, &$infoRequest) {
         $mch = null;
         try {
+            if (!$waitResponse) {
+                // https://www.php.net/manual/pt_BR/function.curl-setopt.php
+                // https://thiagosantos.com/blog/623/php/php-curl-timeout-e-connecttimeout/
+                foreach ($script as $key => $value) {
+                    $ch = curl_init();
+                    curl_setopt($ch, CURLOPT_URL, $thread_http);
+                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+                    curl_setopt($ch, CURLOPT_FRESH_CONNECT, true);
+                    curl_setopt($ch, CURLOPT_POSTFIELDS, ["script" => base64_encode(trim($value))]);
+                    // Tempo em que o client pode aguardar para conectar no server
+                    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
+                    // Tempo em que o solicitante espera por uma resposta
+                    curl_setopt($ch, CURLOPT_TIMEOUT_MS, 500);
+                    curl_exec($ch);
+                    $script[$key] = [                
+                        'response' => null,
+                        "error" => curl_errno($ch) ? curl_error($ch) : null,
+                        "info" => $infoRequest ? curl_getinfo($ch) : null
+                    ];
+                    curl_close($ch);            
+                }
+                $resolve($script);
+                return;
+            }
             // Inicializa um multi-curl handle
             $mch = curl_multi_init();
             foreach ($script as $key => $value) {
@@ -58,14 +90,17 @@ function thread_parallel($script, string $thread_http = "http://localhost/php_th
                 unset($data);
             }
             $uid = null;
-            $uid = setInterval(function() use (&$uid, &$mch, &$script, &$resolve) {
+            $uid = setInterval(function() use (&$uid, &$mch, &$script, &$resolve, &$infoRequest) {
                 $active = null;
                 curl_multi_exec($mch, $active);
                 if ($active === 0) {
                     clearInterval($uid);
                     foreach ($script as $key => $ch) {
-                        // Acessa a resposta de cada requisição
-                        $script[$key] = base64_decode(curl_multi_getcontent($ch));
+                        $script[$key] = [            
+                            "response" => base64_decode(curl_multi_getcontent($ch)),// Acessa a resposta de cada requisição
+                            "error" => curl_errno($ch) ? curl_error($ch) : null,
+                            "info" => $infoRequest ? curl_getinfo($ch) : null
+                        ];
                         // Remove o channel ($ch) da requisição do multi-curl handle ($mch)
                         curl_multi_remove_handle($mch, $ch);
                         // Fecha o channel ($ch)
@@ -75,7 +110,7 @@ function thread_parallel($script, string $thread_http = "http://localhost/php_th
                     curl_multi_close($mch);
                     $resolve($script);
                 }
-            }, 100);
+            }, 50);
         } catch (\Throwable $th) {
             // Fecha o multi-curl handle ($mch)
             curl_multi_close($mch);
